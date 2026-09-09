@@ -1,0 +1,6 @@
+{
+  "name": "Excel Master Guide & Interactive Lab",
+  "description": "Interactive Microsoft Excel master guide in Bangla with live calculation engine, formula practice labs, and full keyboard navigation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
