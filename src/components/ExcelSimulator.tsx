@@ -14,7 +14,8 @@ import {
   Unlock,
   Cloud,
   LogIn,
-  Pencil
+  Pencil,
+  ChevronDown
 } from 'lucide-react';
 import { FunctionItem } from '../types';
 import {
@@ -73,6 +74,25 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
   // Toast / feedback message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Copy Menu Dropdown State
+  const [copyMenuOpen, setCopyMenuOpen] = useState<boolean>(false);
+  const copyMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close copy menu on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (copyMenuRef.current && !copyMenuRef.current.contains(e.target as Node)) {
+        setCopyMenuOpen(false);
+      }
+    };
+    if (copyMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [copyMenuOpen]);
 
   // AutoFill Drag State & Synchronous Ref
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -561,7 +581,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     showToast(`কপি হয়েছে: "${rawVal}"`);
   }, [activeCoord, getRawCellValue]);
 
-  // Paste into active cell
+  // Paste into active cell (with multi-cell and live formula support)
   const pasteIntoActiveCell = useCallback(async () => {
     if (!currentUser) {
       openSignInPrompt();
@@ -569,34 +589,84 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     }
     try {
       const text = await navigator.clipboard.readText();
-      if (text !== undefined) {
-        const trimmed = text.trim();
-        const { r, c } = activeCoord;
+      if (text === undefined || text === null) return;
 
-        if (r === -1) {
-          const newHeaders = [...headers];
-          newHeaders[c] = trimmed;
-          setHeaders(newHeaders);
-          pushHistory(grid, cols, newHeaders);
-          showToast('হেডার সেলে পেস্ট সম্পন্ন হয়েছে');
-          return;
+      const { r, c } = activeCoord;
+
+      // Check if clipboard contains tabular data (multiple columns or rows)
+      if (text.includes('\t') || (text.includes('\n') && text.trim().includes('\n'))) {
+        const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        if (lines.length > 1 && lines[lines.length - 1].trim() === '') {
+          lines.pop();
         }
 
-        let finalVal: string | number = trimmed;
-        if (!trimmed.startsWith('=') && !isNaN(Number(trimmed)) && trimmed !== '') {
-          finalVal = Number(trimmed);
-        }
+        let newGrid = grid.map((rowArr) => [...rowArr]);
+        let newHeaders = [...headers];
+        let headersModified = false;
 
-        const newGrid = grid.map((rowArr, rowIdx) => {
-          if (rowIdx !== r) return rowArr;
-          const newRow = [...rowArr];
-          newRow[c] = finalVal;
-          return newRow;
+        lines.forEach((line, rowOffset) => {
+          const cells = line.split('\t');
+          const targetR = r + rowOffset;
+
+          cells.forEach((rawCell, colOffset) => {
+            const targetC = c + colOffset;
+            let val = rawCell.trim();
+
+            // Handle quoted TSV strings
+            if (val.startsWith('"') && val.endsWith('"')) {
+              val = val.slice(1, -1).replace(/""/g, '"');
+            }
+
+            let finalVal: string | number = val;
+            if (!val.startsWith('=') && !isNaN(Number(val)) && val !== '') {
+              finalVal = Number(val);
+            }
+
+            if (targetR === -1) {
+              if (targetC >= 0 && targetC < newHeaders.length) {
+                newHeaders[targetC] = val;
+                headersModified = true;
+              }
+            } else if (targetR >= 0 && targetR < newGrid.length) {
+              if (targetC >= 0 && targetC < cols.length) {
+                newGrid[targetR][targetC] = finalVal;
+              }
+            }
+          });
         });
+
+        if (headersModified) setHeaders(newHeaders);
         setGrid(newGrid);
-        pushHistory(newGrid, cols, headers);
-        showToast('পেস্ট সম্পন্ন হয়েছে');
+        pushHistory(newGrid, cols, headersModified ? newHeaders : headers);
+        showToast(`মাল্টিপল সেল পেস্ট সম্পন্ন হয়েছে (${lines.length} সারি)`);
+        return;
       }
+
+      // Single cell paste
+      const trimmed = text.trim();
+      if (r === -1) {
+        const newHeaders = [...headers];
+        newHeaders[c] = trimmed;
+        setHeaders(newHeaders);
+        pushHistory(grid, cols, newHeaders);
+        showToast('হেডার সেলে পেস্ট সম্পন্ন হয়েছে');
+        return;
+      }
+
+      let finalVal: string | number = trimmed;
+      if (!trimmed.startsWith('=') && !isNaN(Number(trimmed)) && trimmed !== '') {
+        finalVal = Number(trimmed);
+      }
+
+      const newGrid = grid.map((rowArr, rowIdx) => {
+        if (rowIdx !== r) return rowArr;
+        const newRow = [...rowArr];
+        newRow[c] = finalVal;
+        return newRow;
+      });
+      setGrid(newGrid);
+      pushHistory(newGrid, cols, headers);
+      showToast('পেস্ট সম্পন্ন হয়েছে');
     } catch {
       showToast('ক্লিপবোর্ড অ্যাক্সেস করা যায়নি');
     }
@@ -778,36 +848,83 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     }
   }, [activeCoord, isEditing, getRawCellValue]);
 
-  // Copy whole table to clipboard as TSV and HTML
-  const copyWholeTable = () => {
-    let tsv = headers.join('\t') + '\n';
+  // Copy whole table to clipboard as TSV and HTML with exact formulas preserved
+  const copyWholeTable = (mode: 'formulas' | 'values' = 'formulas') => {
+    // Helper to format TSV cell with quotes if needed
+    const formatTsv = (val: unknown) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes('\t') || str.includes('\n') || str.includes('"')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const escapeHtml = (val: unknown) => {
+      const str = val === null || val === undefined ? '' : String(val);
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    };
+
+    // TSV generation (exact tabs & newlines, formulas kept intact with '=')
+    let tsv = headers.map(formatTsv).join('\t') + '\n';
     grid.forEach((row) => {
-      const evaluatedRow = row.map((cell) => evaluateFormula(cell, grid));
-      tsv += evaluatedRow.join('\t') + '\n';
+      const formattedRow = row.map((cell) => {
+        if (mode === 'values') {
+          return formatTsv(evaluateFormula(cell, grid));
+        }
+        // Retain raw formula (=SUMIFS(...)) or value exactly
+        return formatTsv(cell);
+      });
+      tsv += formattedRow.join('\t') + '\n';
     });
 
-    let html = '<table border="1"><thead><tr>';
-    headers.forEach((h) => (html += `<th>${h}</th>`));
+    // HTML table generation for rich pasting into Excel & Google Sheets
+    let html = '<table style="border-collapse: collapse; font-family: Calibri, Arial, sans-serif; font-size: 11pt;" border="1"><thead><tr>';
+    headers.forEach((h) => {
+      html += `<th style="background-color: #f1f5f9; border: 1px solid #cbd5e1; padding: 6px 12px; font-weight: bold; text-align: center;">${escapeHtml(h)}</th>`;
+    });
     html += '</tr></thead><tbody>';
     grid.forEach((row) => {
       html += '<tr>';
       row.forEach((cell) => {
-        const val = evaluateFormula(cell, grid);
-        html += `<td>${val}</td>`;
+        const cellContent = mode === 'values' ? evaluateFormula(cell, grid) : cell;
+        html += `<td style="border: 1px solid #cbd5e1; padding: 6px 12px;">${escapeHtml(cellContent)}</td>`;
       });
       html += '</tr>';
     });
     html += '</tbody></table>';
 
-    const item = new ClipboardItem({
-      'text/plain': new Blob([tsv], { type: 'text/plain' }),
-      'text/html': new Blob([html], { type: 'text/html' }),
-    });
+    const notifySuccess = () => {
+      showToast(
+        mode === 'formulas'
+          ? '✓ সম্পূর্ণ টেবিল সকল সূত্রসহ (With Formulas) হুবহু কপি হয়েছে!'
+          : '✓ টেবিল শুধুমাত্র মান সহ (Values Only) কপি হয়েছে!'
+      );
+    };
 
-    navigator.clipboard.write([item]).then(
-      () => showToast('✓ সম্পূর্ণ টেবিল কপি হয়েছে (Excel-এ পেস্ট করতে পারবেন)'),
-      () => showToast('কপি ব্যর্থ হয়েছে')
-    );
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        const item = new ClipboardItem({
+          'text/plain': new Blob([tsv], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        });
+        navigator.clipboard.write([item]).then(
+          notifySuccess,
+          () => {
+            navigator.clipboard.writeText(tsv).then(notifySuccess, () => showToast('কপি ব্যর্থ হয়েছে'));
+          }
+        );
+        return;
+      } catch {
+        // Fallback to writeText below
+      }
+    }
+
+    navigator.clipboard.writeText(tsv).then(notifySuccess, () => showToast('কপি ব্যর্থ হয়েছে'));
   };
 
   // Add row
@@ -1140,14 +1257,59 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
         {/* Home Toolbar */}
         <div className="flex flex-wrap items-center justify-between p-2 bg-white gap-2 border-b border-slate-200">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Copy Table Button */}
-            <button
-              onClick={copyWholeTable}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded transition-colors shadow-2xs cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Copy Table (Excel/Sheets)</span>
-            </button>
+            {/* Copy Table Button with Dropdown Options */}
+            <div className="relative inline-flex items-center shadow-2xs rounded">
+              <button
+                onClick={() => copyWholeTable('formulas')}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-l transition-colors cursor-pointer"
+                title="সম্পূর্ণ টেবিল সব সূত্র ও সঠিক ফরম্যাটসহ কপি করুন (Excel ও Google Sheets-এ লাইভ সূত্র হিসেবে পেস্ট হবে)"
+              >
+                <Copy className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Copy Table (With Formulas)</span>
+              </button>
+              <button
+                onClick={() => setCopyMenuOpen((prev) => !prev)}
+                className="px-1.5 py-1 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-t border-b border-r border-emerald-300 rounded-r transition-colors cursor-pointer"
+                title="কপির অপশনসমূহ (সূত্রসহ অথবা শুধু মান)"
+                aria-label="কপির অপশনসমূহ"
+              >
+                <ChevronDown className="w-3.5 h-3.5 text-emerald-700" />
+              </button>
+
+              {copyMenuOpen && (
+                <div
+                  ref={copyMenuRef}
+                  className="absolute left-0 top-full mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50 text-xs"
+                >
+                  <button
+                    onClick={() => {
+                      copyWholeTable('formulas');
+                      setCopyMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 flex items-start gap-2.5 cursor-pointer"
+                  >
+                    <Code2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-slate-900">Copy With Formulas (ডিফল্ট)</div>
+                      <div className="text-[11px] text-slate-500">সব লাইভ সূত্র (=) ও ফরম্যাট হুবহু কপি করবে</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      copyWholeTable('values');
+                      setCopyMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-800 flex items-start gap-2.5 cursor-pointer border-t border-slate-100"
+                  >
+                    <Copy className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-slate-900">Copy Values Only (শুধু মান)</div>
+                      <div className="text-[11px] text-slate-500">সূত্রের বদলে কেবল ক্যালকুলেটেড মান কপি করবে</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Toggle Show Formulas */}
             <button
