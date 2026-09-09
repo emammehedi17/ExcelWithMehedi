@@ -1,0 +1,68 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique Google user identifier"
+        },
+        "email": {
+          "type": "string",
+          "description": "User Google email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "User avatar photo URL"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last profile sync"
+        }
+      },
+      "required": ["userId", "email"]
+    },
+    "UserSheetData": {
+      "title": "UserSheetData",
+      "description": "User customized spreadsheet rows for a specific module",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User UID who owns this sheet data"
+        },
+        "sheetId": {
+          "type": "string",
+          "description": "Module ID (e.g. sum_average, practice-loans)",
+          "maxLength": 100
+        },
+        "dataJson": {
+          "type": "string",
+          "description": "JSON stringified 2D array of rows",
+          "maxLength": 50000
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last edit"
+        }
+      },
+      "required": ["userId", "sheetId", "dataJson"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user account information"
+    },
+    "/users/{userId}/sheets/{sheetId}": {
+      "schema": "UserSheetData",
+      "description": "Stores user grid rows and edits for each module"
+    }
+  }
+}

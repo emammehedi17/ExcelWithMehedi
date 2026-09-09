@@ -8,7 +8,10 @@ import {
   Layers,
   HelpCircle,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  LogIn,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import { functionsData } from './data/functionsData';
 import { FunctionCategory, FunctionItem } from './types';
@@ -16,8 +19,11 @@ import { SyntaxDiagram } from './components/SyntaxDiagram';
 import { ExcelSimulator } from './components/ExcelSimulator';
 import { NavigationHeader } from './components/NavigationHeader';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthModal } from './components/AuthModal';
 
-export default function App() {
+function AppContent() {
+  const { currentUser, signOut, openSignInPrompt } = useAuth();
   const [currentCategory, setCurrentCategory] = useState<FunctionCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [viewMode, setViewMode] = useState<'full' | 'paged'>('full');
@@ -113,6 +119,46 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {currentUser ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 pl-2 pr-1.5 py-1 rounded-lg text-xs">
+                {currentUser.photoURL ? (
+                  <img
+                    src={currentUser.photoURL}
+                    alt={currentUser.displayName || 'User'}
+                    className="w-6 h-6 rounded-full object-cover border border-emerald-500"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px]">
+                    {currentUser.displayName ? currentUser.displayName[0] : 'U'}
+                  </div>
+                )}
+                <div className="hidden sm:flex flex-col text-left">
+                  <span className="font-semibold text-slate-800 leading-tight max-w-[120px] truncate">
+                    {currentUser.displayName || currentUser.email}
+                  </span>
+                  <span className="text-[10px] text-emerald-700 font-medium leading-none">এডিটিং চালু</span>
+                </div>
+                <button
+                  onClick={() => signOut()}
+                  title="লগআউট"
+                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-200/50 rounded transition-colors cursor-pointer ml-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={openSignInPrompt}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs transition-colors cursor-pointer"
+                title="এডিট ও ক্লাউড সেভিং এর জন্য গুগল সাইন-ইন"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Google দিয়ে সাইন-ইন</span>
+                <span className="sm:hidden">লগইন</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsIndexOpen((prev) => !prev)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors cursor-pointer"
@@ -369,6 +415,17 @@ export default function App() {
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
       />
+
+      {/* Google Sign-in Prompt Modal for Editing */}
+      <AuthModal />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

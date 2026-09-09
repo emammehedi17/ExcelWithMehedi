@@ -9,7 +9,11 @@ import {
   Check,
   X,
   Sparkles,
-  Maximize2
+  Maximize2,
+  Lock,
+  Unlock,
+  Cloud,
+  LogIn
 } from 'lucide-react';
 import { FunctionItem } from '../types';
 import {
@@ -21,12 +25,19 @@ import {
   isCoordInReference,
   adjustFormulaForOffset,
 } from '../utils/excelEngine';
+import { useAuth } from '../context/AuthContext';
+import { loadUserSheet, saveUserSheet, resetUserSheet } from '../firebase';
 
 interface ExcelSimulatorProps {
   data: FunctionItem;
 }
 
 export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
+  const { currentUser, openSignInPrompt } = useAuth();
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'saving' | 'saved' | 'error'>('idle');
+  const [isCustomLoaded, setIsCustomLoaded] = useState<boolean>(false);
+  const [gridVersion, setGridVersion] = useState<number>(0);
+
   // Grid data state
   const [grid, setGrid] = useState<(string | number)[][]>(() =>
     JSON.parse(JSON.stringify(data.rows))
@@ -127,6 +138,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
         return [...sliced, stateStr];
       });
       setHistoryIndex((prev) => prev + 1);
+      setGridVersion((v) => v + 1);
     },
     [cols, headers, historyIndex]
   );
@@ -140,6 +152,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       setCols(state.cols);
       setHeaders(state.headers);
       setHistoryIndex(nextIndex);
+      setGridVersion((v) => v + 1);
       setIsEditing(false);
       showToast('Undo সম্পন্ন হয়েছে');
     }
@@ -154,13 +167,96 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       setCols(state.cols);
       setHeaders(state.headers);
       setHistoryIndex(nextIndex);
+      setGridVersion((v) => v + 1);
       setIsEditing(false);
       showToast('Redo সম্পন্ন হয়েছে');
     }
   }, [history, historyIndex]);
 
-  // Reset to initial problem state
+  // Initial load from Firestore if user is authenticated
+  useEffect(() => {
+    let isMounted = true;
+    if (currentUser) {
+      setSyncStatus('loading');
+      loadUserSheet(currentUser.uid, data.id)
+        .then((savedGrid) => {
+          if (!isMounted) return;
+          if (savedGrid && Array.isArray(savedGrid) && savedGrid.length > 0) {
+            setGrid(savedGrid);
+            setIsCustomLoaded(true);
+            setHistory([
+              JSON.stringify({
+                grid: savedGrid,
+                cols: data.cols,
+                headers: data.headers,
+              }),
+            ]);
+            setHistoryIndex(0);
+            setSyncStatus('saved');
+          } else {
+            const fresh = JSON.parse(JSON.stringify(data.rows));
+            setGrid(fresh);
+            setIsCustomLoaded(false);
+            setHistory([
+              JSON.stringify({
+                grid: fresh,
+                cols: data.cols,
+                headers: data.headers,
+              }),
+            ]);
+            setHistoryIndex(0);
+            setSyncStatus('idle');
+          }
+        })
+        .catch((err) => {
+          console.error('Error loading saved user sheet:', err);
+          if (!isMounted) return;
+          const fresh = JSON.parse(JSON.stringify(data.rows));
+          setGrid(fresh);
+          setSyncStatus('idle');
+        });
+    } else {
+      const fresh = JSON.parse(JSON.stringify(data.rows));
+      setGrid(fresh);
+      setIsCustomLoaded(false);
+      setHistory([
+        JSON.stringify({
+          grid: fresh,
+          cols: data.cols,
+          headers: data.headers,
+        }),
+      ]);
+      setHistoryIndex(0);
+      setSyncStatus('idle');
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser, data.id, data.rows, data.cols, data.headers]);
+
+  // Debounced auto-save to Firestore when user edits grid
+  useEffect(() => {
+    if (!currentUser || gridVersion === 0) return;
+    setSyncStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        await saveUserSheet(currentUser.uid, data.id, grid);
+        setSyncStatus('saved');
+        setIsCustomLoaded(true);
+      } catch (err) {
+        console.error('Save to firebase error:', err);
+        setSyncStatus('error');
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [grid, gridVersion, currentUser, data.id]);
+
+  // Reset to initial template state & clear user's custom sheet in Firestore
   const handleReset = () => {
+    handleResetToDefault();
+  };
+
+  const handleResetToDefault = async () => {
     const freshGrid = JSON.parse(JSON.stringify(data.rows));
     const freshCols = JSON.parse(JSON.stringify(data.cols));
     const freshHeaders = JSON.parse(JSON.stringify(data.headers));
@@ -178,7 +274,20 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       }),
     ]);
     setHistoryIndex(0);
-    showToast('শিটটি প্রাথমিক অবস্থায় রিসেট করা হয়েছে');
+    setIsCustomLoaded(false);
+    if (currentUser) {
+      setSyncStatus('saving');
+      try {
+        await resetUserSheet(currentUser.uid, data.id);
+        setSyncStatus('idle');
+        showToast('ডিফল্ট টেমপ্লেটে ফিরিয়ে আনা হয়েছে ও ক্লাউড ডাটা রিসেট হয়েছে');
+      } catch (err) {
+        console.error(err);
+        setSyncStatus('error');
+      }
+    } else {
+      showToast('শিটটি প্রাথমিক অবস্থায় রিসেট করা হয়েছে');
+    }
   };
 
   const showToast = (msg: string) => {
@@ -200,6 +309,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
   // Start editing cell
   const startEditing = useCallback(
     (r: number, c: number, initialChar?: string) => {
+      if (!currentUser) {
+        openSignInPrompt();
+        return;
+      }
       setActiveCoord({ r, c });
       setIsEditing(true);
       setFormulaRangeStart(null);
@@ -396,6 +509,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
   // Paste into active cell
   const pasteIntoActiveCell = useCallback(async () => {
+    if (!currentUser) {
+      openSignInPrompt();
+      return;
+    }
     try {
       const text = await navigator.clipboard.readText();
       if (text !== undefined) {
@@ -418,10 +535,14 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     } catch {
       showToast('ক্লিপবোর্ড অ্যাক্সেস করা যায়নি');
     }
-  }, [activeCoord, grid, pushHistory]);
+  }, [activeCoord, grid, pushHistory, currentUser, openSignInPrompt]);
 
   // Delete / Clear active cell
   const deleteActiveCell = useCallback(() => {
+    if (!currentUser) {
+      openSignInPrompt();
+      return;
+    }
     const { r, c } = activeCoord;
     if (grid[r]?.[c] === '' || grid[r]?.[c] === undefined) return;
     const newGrid = grid.map((rowArr, rowIdx) => {
@@ -433,7 +554,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     setGrid(newGrid);
     pushHistory(newGrid);
     showToast('সেল ক্লিয়ার করা হয়েছে');
-  }, [activeCoord, grid, pushHistory]);
+  }, [activeCoord, grid, pushHistory, currentUser, openSignInPrompt]);
 
   // Global & cell keydown handler
   const handleKeyDown = useCallback(
@@ -476,6 +597,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
         }
         if (e.key.toLowerCase() === 'v') {
           e.preventDefault();
+          if (!currentUser) {
+            openSignInPrompt();
+            return;
+          }
           pasteIntoActiveCell();
           return;
         }
@@ -483,6 +608,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
       if (e.key === 'F2') {
         e.preventDefault();
+        if (!currentUser) {
+          openSignInPrompt();
+          return;
+        }
         startEditing(activeCoord.r, activeCoord.c);
         return;
       }
@@ -530,12 +659,21 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        if (!currentUser) {
+          openSignInPrompt();
+          return;
+        }
         deleteActiveCell();
         return;
       }
 
       // Typing any printable character starts editing
       if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (!currentUser) {
+          e.preventDefault();
+          openSignInPrompt();
+          return;
+        }
         startEditing(activeCoord.r, activeCoord.c, e.key);
       }
     },
@@ -552,6 +690,8 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       grid.length,
       cols.length,
       deleteActiveCell,
+      currentUser,
+      openSignInPrompt,
     ]
   );
 
@@ -597,6 +737,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
   // Add row
   const handleAddRow = (insertIndex: number) => {
+    if (!currentUser) {
+      openSignInPrompt();
+      return;
+    }
     const emptyRow = Array(cols.length).fill('');
     const newGrid = [...grid];
     newGrid.splice(insertIndex + 1, 0, emptyRow);
@@ -607,6 +751,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
   // Add column
   const handleAddCol = (insertIndex: number) => {
+    if (!currentUser) {
+      openSignInPrompt();
+      return;
+    }
     const nextLetter = colIndexToLetter(cols.length);
     const newCols = [...cols, nextLetter];
     const newHeaders = [...headers];
@@ -627,6 +775,10 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
   const handleAutoFillMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!currentUser) {
+      openSignInPrompt();
+      return;
+    }
     autoFillDragRef.current = {
       isDragging: true,
       start: { r: activeCoord.r, c: activeCoord.c },
@@ -953,10 +1105,49 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
             </button>
           </div>
 
-          {/* Quick Helper Tips */}
-          <div className="hidden md:flex items-center gap-2 text-slate-500 text-[11px]">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-            <span>ডাবল-ক্লিকে সূত্র এডিট করুন • AutoFill হ্যান্ডেল টেনে সিরিজ পূরণ করুন</span>
+          {/* Auth Status & Cloud Sync Badge */}
+          <div className="flex items-center gap-2">
+            {!currentUser ? (
+              <button
+                onClick={openSignInPrompt}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 rounded text-xs transition-colors cursor-pointer"
+                title="ডাটা এডিট ও নিজের অ্যাকাউন্টে সেভ করতে সাইন-ইন করুন"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <span className="font-medium">রিড-অনলি মোড • </span>
+                <span className="font-bold underline text-emerald-800">গুগল দিয়ে সাইন-ইন</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded text-xs">
+                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="font-semibold text-emerald-900">এডিটিং সক্রিয়</span>
+
+                {syncStatus === 'saving' && (
+                  <span className="flex items-center gap-1 text-slate-500 font-normal">
+                    <Cloud className="w-3.5 h-3.5 animate-pulse text-emerald-600" />
+                    <span>সেভ হচ্ছে...</span>
+                  </span>
+                )}
+                {syncStatus === 'saved' && (
+                  <span className="flex items-center gap-1 text-emerald-700 font-normal">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>ক্লাউডে সংরক্ষিত</span>
+                  </span>
+                )}
+                {syncStatus === 'loading' && (
+                  <span className="text-slate-500 font-normal">লোড হচ্ছে...</span>
+                )}
+                {isCustomLoaded && (
+                  <button
+                    onClick={handleResetToDefault}
+                    className="text-[11px] text-slate-500 hover:text-rose-600 underline cursor-pointer ml-1"
+                    title="কাস্টম পরিবর্তন মুছে মূল টেমপ্লেটে ফিরিয়ে আনুন"
+                  >
+                    (ডিফল্টে রিসেট)
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -999,7 +1190,12 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
           ref={formulaInputRef}
           type="text"
           value={editValue}
+          readOnly={!currentUser}
           onChange={(e) => {
+            if (!currentUser) {
+              openSignInPrompt();
+              return;
+            }
             setEditValue(e.target.value);
             if (!isEditing) setIsEditing(true);
             updateCursorPos(e, 'formula');
@@ -1008,14 +1204,30 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
           onKeyUp={(e) => updateCursorPos(e, 'formula')}
           onClick={(e) => {
             e.stopPropagation();
+            if (!currentUser) {
+              openSignInPrompt();
+              return;
+            }
             updateCursorPos(e, 'formula');
           }}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            if (!currentUser) {
+              e.preventDefault();
+              openSignInPrompt();
+              return;
+            }
+            e.stopPropagation();
+          }}
           onMouseUp={(e) => {
             e.stopPropagation();
             updateCursorPos(e, 'formula');
           }}
           onFocus={(e) => {
+            if (!currentUser) {
+              e.currentTarget.blur();
+              openSignInPrompt();
+              return;
+            }
             if (!isEditing) {
               setIsEditing(true);
               setEditValue(getRawCellValue(activeCoord.r, activeCoord.c));
@@ -1023,6 +1235,11 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
             updateCursorPos(e, 'formula');
           }}
           onKeyDown={(e) => {
+            if (!currentUser) {
+              e.preventDefault();
+              openSignInPrompt();
+              return;
+            }
             if (e.key === 'Enter') {
               e.preventDefault();
               commitEdit('down');
@@ -1031,8 +1248,16 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
               cancelEdit();
             }
           }}
-          placeholder="সূত্রের মান লিখুন (যেমন: =SUM(B2:E2))"
-          className="flex-1 h-7 px-2 font-mono text-sm font-semibold text-slate-900 border border-transparent focus:border-emerald-600 focus:bg-emerald-50/20 rounded-xs outline-none transition-colors"
+          placeholder={
+            !currentUser
+              ? 'এডিট করতে প্রথমে গুগল দিয়ে সাইন-ইন করুন (রিড-অনলি মোড)'
+              : 'সূত্রের মান লিখুন (যেমন: =SUM(B2:E2))'
+          }
+          className={`flex-1 h-7 px-2 font-mono text-sm font-semibold border rounded-xs outline-none transition-colors ${
+            !currentUser
+              ? 'bg-slate-100/60 text-slate-500 cursor-pointer border-slate-200 hover:border-amber-400'
+              : 'text-slate-900 border-transparent focus:border-emerald-600 focus:bg-emerald-50/20'
+          }`}
         />
       </div>
 
