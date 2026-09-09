@@ -206,6 +206,8 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
             let loadedRows: (string | number)[][] = [];
             let loadedHeaders: string[] = data.headers;
             let loadedCols: string[] = data.cols;
+            let loadedVersion: number | undefined = undefined;
+            let loadedSignature: string | undefined = undefined;
 
             if (Array.isArray(savedData) && savedData.length > 0) {
               loadedRows = savedData;
@@ -213,6 +215,53 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
               loadedRows = (savedData as any).rows;
               if ((savedData as any).headers) loadedHeaders = (savedData as any).headers;
               if ((savedData as any).cols) loadedCols = (savedData as any).cols;
+              loadedVersion = (savedData as any).templateVersion;
+              loadedSignature = (savedData as any).templateSignature;
+            }
+
+            const expectedVersion = data.templateVersion || 1;
+            const currentSignature = `v${expectedVersion}_${data.id}_${data.headers.join('|')}_${data.cols.join('|')}_${data.rows.length}`;
+
+            // Detect if previously saved data in Firebase conflicts or is based on an outdated template
+            const isHeadersMismatched =
+              loadedHeaders.length !== data.headers.length ||
+              loadedHeaders.some((h, idx) => h !== data.headers[idx]);
+
+            const isColsMismatched = loadedCols.length !== data.cols.length;
+
+            const isVersionOutdated =
+              data.templateVersion !== undefined && (loadedVersion === undefined || loadedVersion < data.templateVersion);
+
+            const isSignatureMismatched =
+              Boolean(loadedSignature && loadedSignature !== currentSignature);
+
+            const isConflicting =
+              isHeadersMismatched || isColsMismatched || isVersionOutdated || isSignatureMismatched || loadedRows.length === 0;
+
+            if (isConflicting) {
+              // Obsolete/conflicting template detected in Firestore: clear old doc & load fresh updated data
+              resetUserSheet(currentUser.uid, data.id).catch((e) =>
+                console.warn('Could not reset obsolete sheet in Firestore:', e)
+              );
+
+              const fresh = JSON.parse(JSON.stringify(data.rows));
+              const freshHeaders = JSON.parse(JSON.stringify(data.headers));
+              const freshCols = JSON.parse(JSON.stringify(data.cols));
+              setGrid(fresh);
+              setHeaders(freshHeaders);
+              setCols(freshCols);
+              setIsCustomLoaded(false);
+              setHistory([
+                JSON.stringify({
+                  grid: fresh,
+                  cols: freshCols,
+                  headers: freshHeaders,
+                }),
+              ]);
+              setHistoryIndex(0);
+              setSyncStatus('idle');
+              showToast('✓ নতুন আপডেট অনুযায়ী টেবিল স্বয়ংক্রিয়ভাবে লোড করা হয়েছে');
+              return;
             }
 
             if (loadedRows.length > 0) {
@@ -294,6 +343,8 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
           rows: grid,
           headers,
           cols,
+          templateVersion: data.templateVersion || 1,
+          templateSignature: `v${data.templateVersion || 1}_${data.id}_${data.headers.join('|')}_${data.cols.join('|')}_${data.rows.length}`,
         });
         setSyncStatus('saved');
         setIsCustomLoaded(true);

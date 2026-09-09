@@ -120,6 +120,8 @@ export interface SavedSheetPayload {
   rows: (string | number)[][];
   headers?: string[];
   cols?: string[];
+  templateVersion?: number;
+  templateSignature?: string;
 }
 
 export async function loadUserSheet(

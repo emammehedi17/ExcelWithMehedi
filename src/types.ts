@@ -22,6 +22,7 @@ export type FunctionCategory =
 
 export interface FunctionItem {
   id: string;
+  templateVersion?: number;
   badge: string;
   category: FunctionCategory;
   name: string;

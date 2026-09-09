@@ -369,6 +369,7 @@ export const functionsData: FunctionItem[] = [
   // 10. VLOOKUP & XLOOKUP (Grade Point Determination)
   {
     id: 'vlookup_xlookup',
+    templateVersion: 2,
     badge: 'Lookup',
     category: 'lookup',
     name: 'VLOOKUP ও XLOOKUP দিয়ে গ্রেড পয়েন্ট নির্ণয়',
@@ -594,6 +595,7 @@ export const functionsData: FunctionItem[] = [
   // 16. SUMIFS & COUNTIFS (Combined)
   {
     id: 'sumifs_countifs',
+    templateVersion: 2,
     badge: 'Advanced',
     category: 'advanced',
     name: 'SUMIFS & COUNTIFS Functions',
