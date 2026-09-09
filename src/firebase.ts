@@ -116,7 +116,16 @@ export async function signOutUser(): Promise<void> {
 }
 
 // Helper to load user's custom saved sheet
-export async function loadUserSheet(userId: string, sheetId: string): Promise<(string | number)[][] | null> {
+export interface SavedSheetPayload {
+  rows: (string | number)[][];
+  headers?: string[];
+  cols?: string[];
+}
+
+export async function loadUserSheet(
+  userId: string,
+  sheetId: string
+): Promise<SavedSheetPayload | (string | number)[][] | null> {
   const path = `users/${userId}/sheets/${sheetId}`;
   try {
     const sheetDoc = await getDoc(doc(db, 'users', userId, 'sheets', sheetId));
@@ -133,11 +142,23 @@ export async function loadUserSheet(userId: string, sheetId: string): Promise<(s
   }
 }
 
-// Helper to save user's custom edited sheet
-export async function saveUserSheet(userId: string, sheetId: string, rows: (string | number)[][]): Promise<void> {
+// Helper to save user's custom edited sheet (including rows, headers, cols)
+export async function saveUserSheet(
+  userId: string,
+  sheetId: string,
+  rowsOrPayload: (string | number)[][] | SavedSheetPayload,
+  headers?: string[],
+  cols?: string[]
+): Promise<void> {
   const path = `users/${userId}/sheets/${sheetId}`;
   try {
-    const jsonStr = JSON.stringify(rows);
+    let payload: SavedSheetPayload;
+    if (Array.isArray(rowsOrPayload)) {
+      payload = { rows: rowsOrPayload, headers, cols };
+    } else {
+      payload = rowsOrPayload;
+    }
+    const jsonStr = JSON.stringify(payload);
     await setDoc(doc(db, 'users', userId, 'sheets', sheetId), {
       userId,
       sheetId,

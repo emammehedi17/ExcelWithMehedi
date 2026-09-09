@@ -68,18 +68,19 @@ export function expandRange(rangeStr: string): { r: number; c: number }[] {
 // Extract cell references & ranges from formula string (for visual color highlighting)
 export function extractReferencedCells(formula: string): string[] {
   if (!formula || typeof formula !== 'string' || !formula.startsWith('=')) return [];
-  const matches = formula.match(/\b([A-Za-z]+[0-9]+(?::[A-Za-z]+[0-9]+)?)\b/g);
-  return matches ? Array.from(new Set(matches)) : [];
+  const matches = formula.match(/\$?[A-Za-z]+\$?[0-9]+(?::\$?[A-Za-z]+\$?[0-9]+)?/g);
+  return matches ? Array.from(new Set(matches.map((m) => m.replace(/\$/g, '')))) : [];
 }
 
 // Check if a coordinate is within a reference (either single e.g. "B2" or range e.g. "B2:B5")
 export function isCoordInReference(r: number, c: number, refString: string): boolean {
   if (!refString) return false;
-  if (refString.includes(':')) {
-    const coords = expandRange(refString);
-    return coords.some(coord => coord.r === r && coord.c === c);
+  const cleanRef = refString.replace(/\$/g, '');
+  if (cleanRef.includes(':')) {
+    const coords = expandRange(cleanRef);
+    return coords.some((coord) => coord.r === r && coord.c === c);
   }
-  const single = cellRefToCoord(refString);
+  const single = cellRefToCoord(cleanRef);
   return single !== null && single.r === r && single.c === c;
 }
 
@@ -125,6 +126,28 @@ function testCriteria(val: any, criteriaStr: string): boolean {
     return numVal === numCrit;
   }
   return String(val).toLowerCase() === cleanCrit.toLowerCase();
+}
+
+// Helper to split formula parameters handling quotes and nested parentheses
+function splitFunctionArgs(inner: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let inQuote = false;
+  let parenDepth = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '"') inQuote = !inQuote;
+    else if (ch === '(' && !inQuote) parenDepth++;
+    else if (ch === ')' && !inQuote) parenDepth--;
+    else if (ch === ',' && !inQuote && parenDepth === 0) {
+      args.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  args.push(current.trim());
+  return args;
 }
 
 // Main Formula Evaluation Engine
@@ -576,55 +599,176 @@ export function evaluateFormula(
       return '#N/A';
     }
 
-    // 16. VLOOKUP(val, table, col, match)
-    const vlkMatch = raw.match(/^VLOOKUP\s*\(([^,]+),\s*([^,]+),\s*([^,]+)(?:,\s*([^)]+))?\)$/i);
-    if (vlkMatch) {
-      let lookupVal = vlkMatch[1].trim();
-      const lCoord = cellRefToCoord(lookupVal);
-      if (lCoord && lCoord.r >= 0) {
-        lookupVal = String(getVal(lCoord.r, lCoord.c, grid, visited));
-      } else {
-        lookupVal = lookupVal.replace(/^["']|["']$/g, '');
-      }
+    // 16. VLOOKUP(val, table, col, [range_lookup])
+    const vlkPrefix = raw.match(/^VLOOKUP\s*\((.+)\)$/i);
+    if (vlkPrefix) {
+      const args = splitFunctionArgs(vlkPrefix[1]);
+      if (args.length >= 3) {
+        let lookupVal: any = args[0].trim();
+        const lCoord = cellRefToCoord(lookupVal);
+        if (lCoord && lCoord.r >= 0) {
+          lookupVal = getVal(lCoord.r, lCoord.c, grid, visited);
+        } else {
+          lookupVal = lookupVal.replace(/^["']|["']$/g, '');
+        }
 
-      const tableRange = vlkMatch[2].trim().split(':');
-      const start = cellRefToCoord(tableRange[0]);
-      const end = cellRefToCoord(tableRange[1]);
-      const colIdx = parseInt(vlkMatch[3].trim(), 10) - 1;
+        const tableRangeParts = args[1].trim().split(':');
+        const start = cellRefToCoord(tableRangeParts[0]);
+        const end = cellRefToCoord(tableRangeParts[1]);
+        const colIdx = parseInt(args[2].trim(), 10) - 1;
 
-      if (start && end) {
-        for (let r = start.r; r <= end.r; r++) {
-          const keyVal = String(getVal(r, start.c, grid, visited)).toLowerCase();
-          if (keyVal === lookupVal.toLowerCase()) {
-            return getVal(r, start.c + colIdx, grid, visited);
+        // In Excel, default range_lookup is TRUE (approximate match).
+        // If explicitly FALSE or 0, it requires an exact match.
+        let isApproximate = true;
+        if (args[3] !== undefined && args[3] !== '') {
+          const matchArg = args[3].trim().toUpperCase();
+          if (matchArg === 'FALSE' || matchArg === '0') {
+            isApproximate = false;
           }
         }
+
+        if (start && end && colIdx >= 0) {
+          if (!isApproximate) {
+            // Exact match
+            const strLookup = String(lookupVal).toLowerCase();
+            const numLookup = Number(lookupVal);
+            const isNum = lookupVal !== '' && !isNaN(numLookup);
+
+            for (let r = start.r; r <= end.r; r++) {
+              const cellVal = getVal(r, start.c, grid, visited);
+              if (isNum && !isNaN(Number(cellVal)) && Number(cellVal) === numLookup) {
+                return getVal(r, start.c + colIdx, grid, visited);
+              }
+              if (String(cellVal).toLowerCase() === strLookup) {
+                return getVal(r, start.c + colIdx, grid, visited);
+              }
+            }
+            return '#N/A';
+          } else {
+            // Approximate match: lookup table's 1st column is sorted ascending
+            const numLookup = Number(lookupVal);
+            if (!isNaN(numLookup)) {
+              let bestRow = -1;
+              let bestVal = -Infinity;
+              for (let r = start.r; r <= end.r; r++) {
+                const cellVal = getVal(r, start.c, grid, visited);
+                if (cellVal === '' || cellVal === undefined || cellVal === null) continue;
+                const numCell = Number(cellVal);
+                if (!isNaN(numCell) && numCell <= numLookup) {
+                  if (numCell >= bestVal) {
+                    bestVal = numCell;
+                    bestRow = r;
+                  }
+                }
+              }
+              if (bestRow !== -1) {
+                return getVal(bestRow, start.c + colIdx, grid, visited);
+              }
+              return '#N/A';
+            } else {
+              // Exact or case-insensitive string fallback
+              const strLookup = String(lookupVal).toLowerCase();
+              for (let r = start.r; r <= end.r; r++) {
+                const cellVal = String(getVal(r, start.c, grid, visited)).toLowerCase();
+                if (cellVal === strLookup) {
+                  return getVal(r, start.c + colIdx, grid, visited);
+                }
+              }
+              return '#N/A';
+            }
+          }
+        }
+        return '#N/A';
       }
-      return '#N/A';
     }
 
-    // 17. XLOOKUP(val, lookup_arr, return_arr)
-    const xlkMatch = raw.match(/^XLOOKUP\s*\(([^,]+),\s*([^,]+),\s*([^)]+)\)$/i);
-    if (xlkMatch) {
-      let lookupVal = xlkMatch[1].trim();
-      const lCoord = cellRefToCoord(lookupVal);
-      if (lCoord && lCoord.r >= 0) {
-        lookupVal = String(getVal(lCoord.r, lCoord.c, grid, visited));
-      } else {
-        lookupVal = lookupVal.replace(/^["']|["']$/g, '');
-      }
-
-      const lookupCells = expandRange(xlkMatch[2].trim());
-      const returnCells = expandRange(xlkMatch[3].trim());
-
-      for (let i = 0; i < lookupCells.length; i++) {
-        const k = String(getVal(lookupCells[i].r, lookupCells[i].c, grid, visited)).toLowerCase();
-        if (k === lookupVal.toLowerCase()) {
-          const retCoord = returnCells[i];
-          if (retCoord) return getVal(retCoord.r, retCoord.c, grid, visited);
+    // 17. XLOOKUP(val, lookup_arr, return_arr, [if_not_found], [match_mode], [search_mode])
+    const xlkPrefix = raw.match(/^XLOOKUP\s*\((.+)\)$/i);
+    if (xlkPrefix) {
+      const args = splitFunctionArgs(xlkPrefix[1]);
+      if (args.length >= 3) {
+        let lookupVal: any = args[0].trim();
+        const lCoord = cellRefToCoord(lookupVal);
+        if (lCoord && lCoord.r >= 0) {
+          lookupVal = getVal(lCoord.r, lCoord.c, grid, visited);
+        } else {
+          lookupVal = lookupVal.replace(/^["']|["']$/g, '');
         }
+
+        const lookupCells = expandRange(args[1].trim());
+        const returnCells = expandRange(args[2].trim());
+        const ifNotFound =
+          args[3] !== undefined && args[3] !== ''
+            ? args[3].replace(/^["']|["']$/g, '')
+            : '#N/A';
+
+        // match_mode: 0 = exact (default), -1 = exact or next smaller, 1 = exact or next larger, 2 = wildcard
+        let matchMode = 0;
+        if (args[4] !== undefined && args[4] !== '') {
+          const parsedMode = parseInt(args[4].trim(), 10);
+          if (!isNaN(parsedMode)) matchMode = parsedMode;
+        }
+
+        const numLookup = Number(lookupVal);
+        const isNumericLookup = lookupVal !== '' && !isNaN(numLookup);
+        const strLookup = String(lookupVal).toLowerCase();
+
+        // 1. Try exact match first for all modes
+        for (let i = 0; i < lookupCells.length; i++) {
+          const cellVal = getVal(lookupCells[i].r, lookupCells[i].c, grid, visited);
+          if (isNumericLookup && !isNaN(Number(cellVal)) && Number(cellVal) === numLookup) {
+            const retCoord = returnCells[i];
+            if (retCoord) return getVal(retCoord.r, retCoord.c, grid, visited);
+          } else if (String(cellVal).toLowerCase() === strLookup) {
+            const retCoord = returnCells[i];
+            if (retCoord) return getVal(retCoord.r, retCoord.c, grid, visited);
+          }
+        }
+
+        // 2. If matchMode is -1 (exact match or next smaller item) - essential for grade ranges!
+        if (matchMode === -1 && isNumericLookup) {
+          let bestIdx = -1;
+          let bestVal = -Infinity;
+          for (let i = 0; i < lookupCells.length; i++) {
+            const cellVal = getVal(lookupCells[i].r, lookupCells[i].c, grid, visited);
+            if (cellVal === '' || cellVal === undefined || cellVal === null) continue;
+            const numCell = Number(cellVal);
+            if (!isNaN(numCell) && numCell <= numLookup) {
+              if (numCell >= bestVal) {
+                bestVal = numCell;
+                bestIdx = i;
+              }
+            }
+          }
+          if (bestIdx !== -1 && returnCells[bestIdx]) {
+            return getVal(returnCells[bestIdx].r, returnCells[bestIdx].c, grid, visited);
+          }
+          return ifNotFound;
+        }
+
+        // 3. If matchMode is 1 (exact match or next larger item)
+        if (matchMode === 1 && isNumericLookup) {
+          let bestIdx = -1;
+          let bestVal = Infinity;
+          for (let i = 0; i < lookupCells.length; i++) {
+            const cellVal = getVal(lookupCells[i].r, lookupCells[i].c, grid, visited);
+            if (cellVal === '' || cellVal === undefined || cellVal === null) continue;
+            const numCell = Number(cellVal);
+            if (!isNaN(numCell) && numCell >= numLookup) {
+              if (numCell <= bestVal) {
+                bestVal = numCell;
+                bestIdx = i;
+              }
+            }
+          }
+          if (bestIdx !== -1 && returnCells[bestIdx]) {
+            return getVal(returnCells[bestIdx].r, returnCells[bestIdx].c, grid, visited);
+          }
+          return ifNotFound;
+        }
+
+        return ifNotFound;
       }
-      return '#N/A';
     }
 
     // 18. General Expressions (IF, AND, OR, YEAR, TODAY, DATEDIF, PMT, FV, RATE, PV, NPER, Arithmetic, Concatenation)

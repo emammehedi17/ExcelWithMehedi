@@ -13,7 +13,8 @@ import {
   Lock,
   Unlock,
   Cloud,
-  LogIn
+  LogIn,
+  Pencil
 } from 'lucide-react';
 import { FunctionItem } from '../types';
 import {
@@ -179,51 +180,80 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     if (currentUser) {
       setSyncStatus('loading');
       loadUserSheet(currentUser.uid, data.id)
-        .then((savedGrid) => {
+        .then((savedData) => {
           if (!isMounted) return;
-          if (savedGrid && Array.isArray(savedGrid) && savedGrid.length > 0) {
-            setGrid(savedGrid);
-            setIsCustomLoaded(true);
-            setHistory([
-              JSON.stringify({
-                grid: savedGrid,
-                cols: data.cols,
-                headers: data.headers,
-              }),
-            ]);
-            setHistoryIndex(0);
-            setSyncStatus('saved');
-          } else {
-            const fresh = JSON.parse(JSON.stringify(data.rows));
-            setGrid(fresh);
-            setIsCustomLoaded(false);
-            setHistory([
-              JSON.stringify({
-                grid: fresh,
-                cols: data.cols,
-                headers: data.headers,
-              }),
-            ]);
-            setHistoryIndex(0);
-            setSyncStatus('idle');
+          if (savedData) {
+            let loadedRows: (string | number)[][] = [];
+            let loadedHeaders: string[] = data.headers;
+            let loadedCols: string[] = data.cols;
+
+            if (Array.isArray(savedData) && savedData.length > 0) {
+              loadedRows = savedData;
+            } else if ((savedData as any).rows && Array.isArray((savedData as any).rows)) {
+              loadedRows = (savedData as any).rows;
+              if ((savedData as any).headers) loadedHeaders = (savedData as any).headers;
+              if ((savedData as any).cols) loadedCols = (savedData as any).cols;
+            }
+
+            if (loadedRows.length > 0) {
+              setGrid(loadedRows);
+              setHeaders(loadedHeaders);
+              setCols(loadedCols);
+              setIsCustomLoaded(true);
+              setHistory([
+                JSON.stringify({
+                  grid: loadedRows,
+                  cols: loadedCols,
+                  headers: loadedHeaders,
+                }),
+              ]);
+              setHistoryIndex(0);
+              setSyncStatus('saved');
+              return;
+            }
           }
+
+          const fresh = JSON.parse(JSON.stringify(data.rows));
+          const freshHeaders = JSON.parse(JSON.stringify(data.headers));
+          const freshCols = JSON.parse(JSON.stringify(data.cols));
+          setGrid(fresh);
+          setHeaders(freshHeaders);
+          setCols(freshCols);
+          setIsCustomLoaded(false);
+          setHistory([
+            JSON.stringify({
+              grid: fresh,
+              cols: freshCols,
+              headers: freshHeaders,
+            }),
+          ]);
+          setHistoryIndex(0);
+          setSyncStatus('idle');
         })
         .catch((err) => {
           console.error('Error loading saved user sheet:', err);
           if (!isMounted) return;
           const fresh = JSON.parse(JSON.stringify(data.rows));
+          const freshHeaders = JSON.parse(JSON.stringify(data.headers));
+          const freshCols = JSON.parse(JSON.stringify(data.cols));
           setGrid(fresh);
+          setHeaders(freshHeaders);
+          setCols(freshCols);
           setSyncStatus('idle');
         });
     } else {
       const fresh = JSON.parse(JSON.stringify(data.rows));
+      const freshHeaders = JSON.parse(JSON.stringify(data.headers));
+      const freshCols = JSON.parse(JSON.stringify(data.cols));
       setGrid(fresh);
+      setHeaders(freshHeaders);
+      setCols(freshCols);
       setIsCustomLoaded(false);
       setHistory([
         JSON.stringify({
           grid: fresh,
-          cols: data.cols,
-          headers: data.headers,
+          cols: freshCols,
+          headers: freshHeaders,
         }),
       ]);
       setHistoryIndex(0);
@@ -234,13 +264,17 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     };
   }, [currentUser, data.id, data.rows, data.cols, data.headers]);
 
-  // Debounced auto-save to Firestore when user edits grid
+  // Debounced auto-save to Firestore when user edits grid or headers
   useEffect(() => {
     if (!currentUser || gridVersion === 0) return;
     setSyncStatus('saving');
     const timer = setTimeout(async () => {
       try {
-        await saveUserSheet(currentUser.uid, data.id, grid);
+        await saveUserSheet(currentUser.uid, data.id, {
+          rows: grid,
+          headers,
+          cols,
+        });
         setSyncStatus('saved');
         setIsCustomLoaded(true);
       } catch (err) {
@@ -249,7 +283,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       }
     }, 700);
     return () => clearTimeout(timer);
-  }, [grid, gridVersion, currentUser, data.id]);
+  }, [grid, headers, cols, gridVersion, currentUser, data.id]);
 
   // Reset to initial template state & clear user's custom sheet in Firestore
   const handleReset = () => {
@@ -298,12 +332,15 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
   // Get current active raw cell value
   const getRawCellValue = useCallback(
     (r: number, c: number): string => {
+      if (r === -1) {
+        return headers[c] !== undefined ? String(headers[c]) : '';
+      }
       if (grid[r] && grid[r][c] !== undefined) {
         return String(grid[r][c]);
       }
       return '';
     },
-    [grid]
+    [grid, headers]
   );
 
   // Start editing cell
@@ -335,7 +372,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
         }
       }, 20);
     },
-    [getRawCellValue]
+    [currentUser, openSignInPrompt, getRawCellValue]
   );
 
   // Commit editing changes
@@ -343,21 +380,34 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     (direction?: 'down' | 'up' | 'right' | 'left' | 'none') => {
       const { r, c } = activeCoord;
       const trimmed = editValue.trim();
-      let finalVal: string | number = trimmed;
-      if (!trimmed.startsWith('=') && !isNaN(Number(trimmed)) && trimmed !== '') {
-        finalVal = Number(trimmed);
-      }
 
-      const currentVal = grid[r]?.[c];
-      if (finalVal !== currentVal) {
-        const newGrid = grid.map((rowArr, rowIdx) => {
-          if (rowIdx !== r) return rowArr;
-          const newRow = [...rowArr];
-          newRow[c] = finalVal;
-          return newRow;
-        });
-        setGrid(newGrid);
-        pushHistory(newGrid);
+      if (r === -1) {
+        // Committing header row edit
+        const currentVal = headers[c] ?? '';
+        if (trimmed !== currentVal) {
+          const newHeaders = [...headers];
+          newHeaders[c] = trimmed;
+          setHeaders(newHeaders);
+          pushHistory(grid, cols, newHeaders);
+        }
+      } else {
+        // Committing data row edit
+        let finalVal: string | number = trimmed;
+        if (!trimmed.startsWith('=') && !isNaN(Number(trimmed)) && trimmed !== '') {
+          finalVal = Number(trimmed);
+        }
+
+        const currentVal = grid[r]?.[c];
+        if (finalVal !== currentVal) {
+          const newGrid = grid.map((rowArr, rowIdx) => {
+            if (rowIdx !== r) return rowArr;
+            const newRow = [...rowArr];
+            newRow[c] = finalVal;
+            return newRow;
+          });
+          setGrid(newGrid);
+          pushHistory(newGrid, cols, headers);
+        }
       }
 
       setIsEditing(false);
@@ -367,17 +417,21 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       formulaInsertionSessionRef.current = null;
 
       // Move active coordinate based on navigation key
-      if (direction === 'down' && r < grid.length - 1) {
-        setActiveCoord({ r: r + 1, c });
-      } else if (direction === 'up' && r > 0) {
-        setActiveCoord({ r: r - 1, c });
+      if (direction === 'down') {
+        if (r < grid.length - 1) {
+          setActiveCoord({ r: r + 1, c });
+        }
+      } else if (direction === 'up') {
+        if (r > -1) {
+          setActiveCoord({ r: r - 1, c });
+        }
       } else if (direction === 'right' && c < cols.length - 1) {
         setActiveCoord({ r, c: c + 1 });
       } else if (direction === 'left' && c > 0) {
         setActiveCoord({ r, c: c - 1 });
       }
     },
-    [activeCoord, editValue, grid, cols.length, pushHistory]
+    [activeCoord, editValue, grid, headers, cols, pushHistory]
   );
 
   // Cancel edit
@@ -517,11 +571,22 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       const text = await navigator.clipboard.readText();
       if (text !== undefined) {
         const trimmed = text.trim();
+        const { r, c } = activeCoord;
+
+        if (r === -1) {
+          const newHeaders = [...headers];
+          newHeaders[c] = trimmed;
+          setHeaders(newHeaders);
+          pushHistory(grid, cols, newHeaders);
+          showToast('হেডার সেলে পেস্ট সম্পন্ন হয়েছে');
+          return;
+        }
+
         let finalVal: string | number = trimmed;
         if (!trimmed.startsWith('=') && !isNaN(Number(trimmed)) && trimmed !== '') {
           finalVal = Number(trimmed);
         }
-        const { r, c } = activeCoord;
+
         const newGrid = grid.map((rowArr, rowIdx) => {
           if (rowIdx !== r) return rowArr;
           const newRow = [...rowArr];
@@ -529,13 +594,13 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
           return newRow;
         });
         setGrid(newGrid);
-        pushHistory(newGrid);
+        pushHistory(newGrid, cols, headers);
         showToast('পেস্ট সম্পন্ন হয়েছে');
       }
     } catch {
       showToast('ক্লিপবোর্ড অ্যাক্সেস করা যায়নি');
     }
-  }, [activeCoord, grid, pushHistory, currentUser, openSignInPrompt]);
+  }, [activeCoord, grid, headers, cols, pushHistory, currentUser, openSignInPrompt]);
 
   // Delete / Clear active cell
   const deleteActiveCell = useCallback(() => {
@@ -544,6 +609,16 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       return;
     }
     const { r, c } = activeCoord;
+    if (r === -1) {
+      if (!headers[c]) return;
+      const newHeaders = [...headers];
+      newHeaders[c] = '';
+      setHeaders(newHeaders);
+      pushHistory(grid, cols, newHeaders);
+      showToast('হেডার সেল ক্লিয়ার করা হয়েছে');
+      return;
+    }
+
     if (grid[r]?.[c] === '' || grid[r]?.[c] === undefined) return;
     const newGrid = grid.map((rowArr, rowIdx) => {
       if (rowIdx !== r) return rowArr;
@@ -552,9 +627,9 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       return newRow;
     });
     setGrid(newGrid);
-    pushHistory(newGrid);
+    pushHistory(newGrid, cols, headers);
     showToast('সেল ক্লিয়ার করা হয়েছে');
-  }, [activeCoord, grid, pushHistory, currentUser, openSignInPrompt]);
+  }, [activeCoord, grid, headers, cols, pushHistory, currentUser, openSignInPrompt]);
 
   // Global & cell keydown handler
   const handleKeyDown = useCallback(
@@ -619,7 +694,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         if (e.shiftKey) {
-          if (activeCoord.r > 0) setActiveCoord((prev) => ({ ...prev, r: prev.r - 1 }));
+          if (activeCoord.r > -1) setActiveCoord((prev) => ({ ...prev, r: prev.r - 1 }));
         } else {
           if (activeCoord.r < grid.length - 1) setActiveCoord((prev) => ({ ...prev, r: prev.r + 1 }));
         }
@@ -638,7 +713,7 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
 
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        if (activeCoord.r > 0) setActiveCoord((prev) => ({ ...prev, r: prev.r - 1 }));
+        if (activeCoord.r > -1) setActiveCoord((prev) => ({ ...prev, r: prev.r - 1 }));
         return;
       }
       if (e.key === 'ArrowDown') {
@@ -964,8 +1039,11 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
     return [];
   }, [isEditing, editValue]);
 
-  // Active cell reference string
-  const activeCellRef = coordToCellRef(activeCoord.r, activeCoord.c);
+  // Active cell reference string (Row 1 is header row)
+  const activeCellRef =
+    activeCoord.r === -1
+      ? `${cols[activeCoord.c] || colIndexToLetter(activeCoord.c)}1`
+      : coordToCellRef(activeCoord.r, activeCoord.c);
 
   // Check if cell is in drag selection preview
   const isCellInDragPreview = (r: number, c: number) => {
@@ -1292,19 +1370,92 @@ export const ExcelSimulator: React.FC<ExcelSimulatorProps> = ({ data }) => {
           </thead>
 
           <tbody>
-            {/* Header Row (Row 1 logical) */}
+            {/* Header Row (Row 1 logical) - Editable */}
             <tr className="bg-slate-50">
-              <th className="w-10 bg-slate-100 border border-slate-300 text-slate-500 font-semibold text-center p-1">
+              <th className="w-10 bg-slate-100 border border-slate-300 text-slate-500 font-semibold text-center p-1 select-none">
                 1
               </th>
-              {headers.map((hText, cIdx) => (
-                <td
-                  key={cIdx}
-                  className="border border-slate-300 bg-slate-100/90 font-bold text-slate-800 p-1.5 text-center truncate"
-                >
-                  {hText}
-                </td>
-              ))}
+              {headers.map((hText, cIdx) => {
+                const isSelected = activeCoord.r === -1 && activeCoord.c === cIdx;
+                const isEditingCell = isSelected && isEditing;
+                const colLetter = cols[cIdx] || colIndexToLetter(cIdx);
+                const cellRef = `${colLetter}1`;
+
+                return (
+                  <td
+                    key={cIdx}
+                    data-row={-1}
+                    data-col={cIdx}
+                    data-ref={cellRef}
+                    onClick={() => {
+                      if (!currentUser) {
+                        openSignInPrompt();
+                        return;
+                      }
+                      setActiveCoord({ r: -1, c: cIdx });
+                      if (isEditing) commitEdit('none');
+                    }}
+                    onDoubleClick={() => {
+                      if (!currentUser) {
+                        openSignInPrompt();
+                        return;
+                      }
+                      startEditing(-1, cIdx);
+                    }}
+                    className={`relative border border-slate-300 p-1.5 text-center font-bold truncate cursor-cell transition-colors select-none ${
+                      isSelected
+                        ? 'outline-2 outline-emerald-700 bg-white z-20 shadow-xs text-slate-950 ring-1 ring-emerald-700'
+                        : 'bg-slate-100/90 text-slate-800 hover:bg-slate-200/80'
+                    }`}
+                    title={
+                      currentUser
+                        ? `হেডার সেল ${cellRef}: সিলেক্ট করতে ক্লিক বা নাম পরিবর্তন করতে ডাবল-ক্লিক করুন`
+                        : 'হেডার এডিট করতে সাইন-ইন করুন'
+                    }
+                  >
+                    {isEditingCell ? (
+                      <input
+                        ref={cellInputRef}
+                        type="text"
+                        value={editValue}
+                        onChange={(e) => {
+                          setEditValue(e.target.value);
+                          updateCursorPos(e, 'cell');
+                        }}
+                        onSelect={(e) => updateCursorPos(e, 'cell')}
+                        onKeyUp={(e) => updateCursorPos(e, 'cell')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateCursorPos(e, 'cell');
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            commitEdit(e.shiftKey ? 'up' : 'down');
+                          } else if (e.key === 'Tab') {
+                            e.preventDefault();
+                            commitEdit(e.shiftKey ? 'left' : 'right');
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                        }}
+                        onBlur={() => commitEdit('none')}
+                        className="w-full text-center font-bold text-xs sm:text-sm bg-emerald-50 text-emerald-950 border border-emerald-600 rounded-xs outline-none px-1 py-0.5 shadow-xs"
+                        autoFocus
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center gap-1 group/header">
+                        <span className="truncate block">{hText}</span>
+                        {currentUser && (
+                          <Pencil className="w-2.5 h-2.5 text-slate-400 opacity-0 group-hover/header:opacity-100 transition-opacity shrink-0" />
+                        )}
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
             </tr>
 
             {/* Data Rows (Row 2, Row 3...) */}

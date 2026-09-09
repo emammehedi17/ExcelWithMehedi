@@ -366,45 +366,47 @@ export const functionsData: FunctionItem[] = [
     ]
   },
 
-  // 10. VLOOKUP & XLOOKUP (Combined)
+  // 10. VLOOKUP & XLOOKUP (Grade Point Determination)
   {
     id: 'vlookup_xlookup',
     badge: 'Lookup',
     category: 'lookup',
-    name: 'VLOOKUP & XLOOKUP Functions',
-    title: '=VLOOKUP(...) / =XLOOKUP(...)',
-    desc: 'একই অর্ডারিং শিটে মাস্টার প্রাইস তালিকা থেকে VLOOKUP দিয়ে পণ্যের নাম এবং আধুনিক XLOOKUP দিয়ে একক দর ফেচ করে স্বয়ংক্রিয় মোট বিল হিসাব।',
+    name: 'VLOOKUP ও XLOOKUP দিয়ে গ্রেড পয়েন্ট নির্ণয়',
+    title: '=VLOOKUP(F2, $J$2:$L$8, 2, TRUE) / =XLOOKUP(F2, $J$2:$J$8, $K$2:$K$8, 0, -1)',
+    desc: 'একই শিটে আলাদা গ্রেডিং রেফারেন্স টেবিল (J2:L8) থেকে ৩/৪ বিষয়ের গড় প্রাপ্ত নম্বরের ওপর ভিত্তি করে VLOOKUP-এর Approximate Match (TRUE) এবং আধুনিক XLOOKUP (Match Mode -1) দিয়ে স্বয়ংক্রিয় গ্রেড পয়েন্ট ও লেটার গ্রেড নির্ণয়।',
     tokens: [
       { text: '=VLOOKUP(', class: 'c-fn' },
-      { text: 'B2, $G$2:$I$6, 2, FALSE', class: 'c-p1' },
+      { text: 'F2, $J$2:$L$8, 2, TRUE', class: 'c-p1' },
       { text: ')', class: 'c-fn' },
       { text: ' | ', class: 'c-fn' },
       { text: '=XLOOKUP(', class: 'c-fn' },
-      { text: 'B2, $G$2:$G$6, $I$2:$I$6', class: 'c-p2' },
+      { text: 'F2, $J$2:$J$8, $K$2:$K$8, 0, -1', class: 'c-p2' },
       { text: ')', class: 'c-fn' },
       { text: ' | ', class: 'c-fn' },
-      { text: '=C2*E2', class: 'c-p3' }
+      { text: '=XLOOKUP(', class: 'c-fn' },
+      { text: 'F2, $J$2:$J$8, $L$2:$L$8, "F", -1', class: 'c-p3' },
+      { text: ')', class: 'c-fn' }
     ],
     params: [
-      { name: 'VLOOKUP (পণ্যের নাম)', meaning: 'মাস্টার টেবিল ($G$2:$I$6) এর ২য় কলাম থেকে আইটেমের নাম ফেচ করে আনে।', class: 'c-p1' },
-      { name: 'XLOOKUP (একক দর)', meaning: 'কোড লিস্ট ($G$2:$G$6) থেকে মিলিয়ে দর লিস্ট ($I$2:$I$6) থেকে সরাসরি মূল্য আনে।', class: 'c-p2' },
-      { name: 'মোট বিল (=C2*E2)', meaning: 'অর্ডার পরিমাণ এবং ফেচ করা একক দরের গুণফলে মোট বিল হিসাব।', class: 'c-p3' }
+      { name: 'গড় নম্বর (=AVERAGE)', meaning: 'শিক্ষার্থীর ৪টি বিষয়ের প্রাপ্ত নম্বরের গড় হিসাব (=AVERAGE(B2:E2))।', class: 'c-p1' },
+      { name: 'VLOOKUP (গ্রেড পয়েন্ট)', meaning: 'গ্রেডিং টেবিলের ($J$2:$L$8) ১ম কলামে রেঞ্জ মিলিয়ে ২য় কলাম থেকে গ্রেড পয়েন্ট আনে (TRUE = Approximate Match)।', class: 'c-p2' },
+      { name: 'XLOOKUP (গ্রেড পয়েন্ট ও লেটার)', meaning: 'নম্বর রেঞ্জ ($J$2:$J$8) থেকে Match Mode -1 (Exact or next smaller) দিয়ে সরাসরি GP বা লেটার গ্রেড আনে।', class: 'c-p3' }
     ],
-    activeCell: 'D2',
-    cols: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'],
-    colWidths: ['90px', '95px', '80px', '140px', '135px', '110px', '95px', '115px', '95px'],
-    headers: ['অর্ডার ID', 'পণ্য কোড', 'পরিমাণ', 'পণ্যের নাম (VLOOKUP)', 'একক দর (XLOOKUP)', 'মোট বিল (Tk)', 'মাস্টার কোড', 'মাস্টার পণ্য', 'মাস্টার দর'],
+    activeCell: 'G2',
+    cols: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'],
+    colWidths: ['130px', '75px', '75px', '75px', '75px', '95px', '165px', '165px', '150px', '105px', '115px', '95px'],
+    headers: ['শিক্ষার্থী', 'বাংলা', 'ইংরেজি', 'গণিত', 'বিজ্ঞান', 'গড় নম্বর', 'গ্রেড পয়েন্ট (VLOOKUP)', 'গ্রেড পয়েন্ট (XLOOKUP)', 'লেটার গ্রেড (XLOOKUP)', 'সর্বনিম্ন নম্বর', 'গ্রেড পয়েন্ট (GP)', 'লেটার গ্রেড'],
     rows: [
-      ['ORD-01', 'P-101', 5, '=VLOOKUP(B2, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B2, $G$2:$G$6, $I$2:$I$6)', '=C2*E2', 'P-101', 'কীবোর্ড', 850],
-      ['ORD-02', 'P-103', 2, '=VLOOKUP(B3, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B3, $G$2:$G$6, $I$2:$I$6)', '=C3*E3', 'P-102', 'মাউস', 450],
-      ['ORD-03', 'P-102', 8, '=VLOOKUP(B4, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B4, $G$2:$G$6, $I$2:$I$6)', '=C4*E4', 'P-103', 'মনিটর', 12500],
-      ['ORD-04', 'P-105', 4, '=VLOOKUP(B5, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B5, $G$2:$G$6, $I$2:$I$6)', '=C5*E5', 'P-104', 'হেডফোন', 1200],
-      ['ORD-05', 'P-104', 3, '=VLOOKUP(B6, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B6, $G$2:$G$6, $I$2:$I$6)', '=C6*E6', 'P-105', 'ওয়েবক্যাম', 2800],
-      ['ORD-06', 'P-101', 10, '=VLOOKUP(B7, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B7, $G$2:$G$6, $I$2:$I$6)', '=C7*E7', '', '', ''],
-      ['ORD-07', 'P-103', 1, '=VLOOKUP(B8, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B8, $G$2:$G$6, $I$2:$I$6)', '=C8*E8', '', '', ''],
-      ['ORD-08', 'P-102', 6, '=VLOOKUP(B9, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B9, $G$2:$G$6, $I$2:$I$6)', '=C9*E9', '', '', ''],
-      ['ORD-09', 'P-104', 5, '=VLOOKUP(B10, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B10, $G$2:$G$6, $I$2:$I$6)', '=C10*E10', '', '', ''],
-      ['ORD-10', 'P-105', 2, '=VLOOKUP(B11, $G$2:$I$6, 2, FALSE)', '=XLOOKUP(B11, $G$2:$G$6, $I$2:$I$6)', '=C11*E11', '', '', '']
+      ['রাকিবুল হাসান', 85, 88, 92, 87, '=AVERAGE(B2:E2)', '=VLOOKUP(F2, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F2, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F2, $J$2:$J$8, $L$2:$L$8, "F", -1)', 0, 0, 'F'],
+      ['সানজিদা আহমেদ', 72, 75, 78, 71, '=AVERAGE(B3:E3)', '=VLOOKUP(F3, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F3, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F3, $J$2:$J$8, $L$2:$L$8, "F", -1)', 33, 1, 'D'],
+      ['তানিম ইকবাল', 62, 65, 68, 61, '=AVERAGE(B4:E4)', '=VLOOKUP(F4, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F4, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F4, $J$2:$J$8, $L$2:$L$8, "F", -1)', 40, 2, 'C'],
+      ['মুমতাহিনা হক', 54, 52, 58, 56, '=AVERAGE(B5:E5)', '=VLOOKUP(F5, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F5, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F5, $J$2:$J$8, $L$2:$L$8, "F", -1)', 50, 3, 'B'],
+      ['নাজমুল সাকিব', 42, 45, 48, 41, '=AVERAGE(B6:E6)', '=VLOOKUP(F6, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F6, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F6, $J$2:$J$8, $L$2:$L$8, "F", -1)', 60, 3.5, 'A-'],
+      ['সুমাইয়া ফারহানা', 35, 38, 36, 39, '=AVERAGE(B7:E7)', '=VLOOKUP(F7, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F7, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F7, $J$2:$J$8, $L$2:$L$8, "F", -1)', 70, 4, 'A'],
+      ['ফাহিম মোর্শেদ', 28, 30, 25, 29, '=AVERAGE(B8:E8)', '=VLOOKUP(F8, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F8, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F8, $J$2:$J$8, $L$2:$L$8, "F", -1)', 80, 5, 'A+'],
+      ['তাসফিয়া ইসলাম', 95, 90, 94, 93, '=AVERAGE(B9:E9)', '=VLOOKUP(F9, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F9, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F9, $J$2:$J$8, $L$2:$L$8, "F", -1)', '', '', ''],
+      ['আব্দুল্লাহ আলিম', 78, 82, 70, 74, '=AVERAGE(B10:E10)', '=VLOOKUP(F10, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F10, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F10, $J$2:$J$8, $L$2:$L$8, "F", -1)', '', '', ''],
+      ['রুবাইয়া খানম', 65, 60, 62, 69, '=AVERAGE(B11:E11)', '=VLOOKUP(F11, $J$2:$L$8, 2, TRUE)', '=XLOOKUP(F11, $J$2:$J$8, $K$2:$K$8, 0, -1)', '=XLOOKUP(F11, $J$2:$J$8, $L$2:$L$8, "F", -1)', '', '', '']
     ]
   },
 
